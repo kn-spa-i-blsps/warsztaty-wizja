@@ -1,19 +1,28 @@
 import math
 import random
 import cv2
-from hailo_platform import VDevice
+from hailo_platform import (
+    HEF,
+    ConfigureParams,
+    FormatType,
+    HailoStreamInterface,
+    InferVStreams,
+    InputVStreamParams,
+    OutputVStreamParams,
+    VDevice,
+)
 import numpy as np
 from picamera2 import Picamera2
 
 # ==========================================
 # 1. KONFIGURACJA MODELU I PUNKTÓW COCO
 # ==========================================
-HEF_PATH = "/usr/share/hailo-models/yolov8s_pose_h8l_pi.hef"
+HEF_PATH = "/usr/share/hailo-models/yolov8s_pose_h8.hef"
 INPUT_SIZE = (640, 640)
 
 LEFT_WRIST = 9
 RIGHT_WRIST = 10
-CLAP_THRESHOLD = 70  # Próg odległości dłoni w pikselach
+CLAP_THRESHOLD = 75
 
 # ==========================================
 # 2. PARAMETRY FIZYKI FLAPPY BIRD
@@ -56,183 +65,241 @@ picam2.configure(config)
 picam2.start()
 
 # ==========================================
-# 4. INICJALIZACJA HAILO (BUFORY PRZED PĘTLĄ)
+# 4. INICJALIZACJA HAILO-8 (VStreams API)
 # ==========================================
 target = VDevice()
-infer_model = target.create_infer_model(HEF_PATH)
-infer_model.set_batch_size(1)
-configured_infer_model = infer_model.configure()
+hef = HEF(HEF_PATH)
 
-# Tworzymy powiązania i bufory pamięci raz przed startem gry (kluczowe dla płynności)
-bindings = configured_infer_model.create_bindings()
-output_buffers = {
-    name: np.empty(
-        infer_model.output(name).shape, dtype=infer_model.output(name).dtype
-    )
-    for name in infer_model.output_names
-}
-for name, buf in output_buffers.items():
-    bindings.output(name).set_buffer(buf)
+# Pobranie metadanych strumieni z HEF
+input_vstream_infos = hef.get_input_vstream_infos()
+output_vstream_infos = hef.get_output_vstream_infos()
+input_name = input_vstream_infos[0].name
 
-print("Akcelerator Hailo gotowy do gry!")
-print("Klaśnij dłońmi, aby ptak skoczył. 'R' - reset gry, 'Q' - wyjście.")
+# Konfiguracja PCIe i parametrów VStreams
+configure_params = ConfigureParams.create_from_hef(
+    hef, interface=HailoStreamInterface.PCIe
+)
+network_group = target.configure(hef, configure_params)[0]
+network_group_params = network_group.create_params()
+
+input_vstreams_params = InputVStreamParams.make(
+    network_group, format_type=FormatType.UINT8
+)
+output_vstreams_params = OutputVStreamParams.make(
+    network_group, format_type=FormatType.FLOAT32
+)
+
+print("Akcelerator Hailo-8 skonfigurowany pomyślnie!")
+print(f"Strumień wejściowy: {input_name}")
+print("Strumienie wyjściowe:")
+for info in output_vstream_infos:
+    print(f"  • {info.name}: shape = {info.shape}")
+
+print("Sterowanie: Klaśnięcie = skok. Klawisz 'R' = reset, 'Q' = wyjście.")
 
 # ==========================================
-# 5. PĘTLA GRY
+# 5. GŁÓWNA PĘTLA GRY
 # ==========================================
 try:
-    while True:
-        # Pobranie klatki z sensora i odbicie lustrzane
-        frame = picam2.capture_array()
-        frame = cv2.flip(frame, 1)
-        h, w, _ = frame.shape
+    with network_group.activate(network_group_params):
+        with InferVStreams(
+            network_group, input_vstreams_params, output_vstreams_params
+        ) as infer_pipeline:
+            while True:
+                # 1. Pobranie i przygotowanie klatki
+                frame = picam2.capture_array()
+                frame = cv2.flip(frame, 1)
+                h, w, _ = frame.shape
 
-        # Przygotowanie tensora wejściowego dla modelu (640x640, RGB)
-        input_frame = cv2.resize(frame, INPUT_SIZE)
-        input_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGR2RGB)
-        input_data = np.expand_dims(input_frame, axis=0)
+                input_frame = cv2.resize(frame, INPUT_SIZE)
+                input_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGR2RGB)
+                input_data = {
+                    input_name: np.expand_dims(input_frame, axis=0).astype(
+                        np.uint8
+                    )
+                }
 
-        # Wstrzyknięcie klatki do bufora i obliczenia na Hailo
-        bindings.input().set_buffer(input_data)
-        configured_infer_model.run([bindings], timeout_ms=1000)
+                # 2. Inferencja NPU
+                outputs = infer_pipeline.infer(input_data)
 
-        # --- ODCZYT I PARSOWANIE POZYCJI DŁONI ---
-        is_clapping = False
-        dist = None
+                # 3. Odczyt współrzędnych dłoni
+                is_clapping = False
+                dist = None
 
-        for out_name, buf in output_buffers.items():
-            # Szukamy tensora zawierającego punkty szkieletu
-            if "keypoints" in out_name or len(buf.shape) == 3:
-                raw_kpts = buf[0]  # Kształt [17, 3]
+                for out_name, buf in outputs.items():
+                    # Format siatkowy [1, H, W, 51]
+                    if buf.shape[-1] == 51:
+                        grid_h, grid_w = buf.shape[1], buf.shape[2]
+                        stride = INPUT_SIZE[0] // grid_w
 
-                if len(raw_kpts) >= 17:
-                    scale_y = h / INPUT_SIZE[1]
-                    scale_x = w / INPUT_SIZE[0]
+                        flat_kpts = buf[0].reshape(grid_h * grid_w, 17, 3)
+                        mean_confs = flat_kpts[:, :, 2].mean(axis=1)
+                        best_cell_idx = int(np.argmax(mean_confs))
 
-                    p_left = raw_kpts[LEFT_WRIST]
-                    p_right = raw_kpts[RIGHT_WRIST]
+                        best_kpts = flat_kpts[best_cell_idx]
+                        grid_y = best_cell_idx // grid_w
+                        grid_x = best_cell_idx % grid_w
 
-                    conf_left = p_left[2] if len(p_left) > 2 else 1.0
-                    conf_right = p_right[2] if len(p_right) > 2 else 1.0
+                        p_left = best_kpts[LEFT_WRIST]
+                        p_right = best_kpts[RIGHT_WRIST]
 
-                    if conf_left > 0.4 and conf_right > 0.4:
-                        x_l = int(p_left[0] * scale_x)
-                        y_l = int(p_left[1] * scale_y)
-                        x_p = int(p_right[0] * scale_x)
-                        y_p = int(p_right[1] * scale_y)
+                        scale_y = h / INPUT_SIZE[1]
+                        scale_x = w / INPUT_SIZE[0]
+
+                        x_l = int(
+                            (p_left[0] * 2.0 - 0.5 + grid_x) * stride * scale_x
+                        )
+                        y_l = int(
+                            (p_left[1] * 2.0 - 0.5 + grid_y) * stride * scale_y
+                        )
+                        x_p = int(
+                            (p_right[0] * 2.0 - 0.5 + grid_x) * stride * scale_x
+                        )
+                        y_p = int(
+                            (p_right[1] * 2.0 - 0.5 + grid_y) * stride * scale_y
+                        )
 
                         dist = math.dist((x_l, y_l), (x_p, y_p))
                         is_clapping = dist < CLAP_THRESHOLD
 
-                        # Wizualizacja dłoni i odległości
                         kolor = (0, 0, 255) if is_clapping else (0, 255, 0)
                         cv2.circle(frame, (x_l, y_l), 8, kolor, -1)
                         cv2.circle(frame, (x_p, y_p), 8, kolor, -1)
                         cv2.line(frame, (x_l, y_l), (x_p, y_p), kolor, 2)
-                break
+                        break
 
-        # --- LOGIKA STEROWANIA (DETEKCJA ZBOCZA) ---
-        if is_clapping and not was_clapping:
-            if game_over:
-                reset_game()
-            else:
-                bird_velocity = JUMP_STRENGTH
+                    # Format punktów zdekodowanych [1, 17, 3]
+                    elif "keypoints" in out_name or (
+                        len(buf.shape) >= 2 and buf.shape[-2:] == (17, 3)
+                    ):
+                        raw_kpts = buf[0]
+                        if len(raw_kpts.shape) == 3:
+                            raw_kpts = raw_kpts[0]
 
-        was_clapping = is_clapping
+                        scale_y = h / INPUT_SIZE[1]
+                        scale_x = w / INPUT_SIZE[0]
 
-        # --- MECHANIKA I KOLIZJE FLAPPY BIRD ---
-        if not game_over:
-            bird_velocity += GRAVITY
-            bird_y += bird_velocity
+                        p_left = raw_kpts[LEFT_WRIST]
+                        p_right = raw_kpts[RIGHT_WRIST]
 
-            pipe_x -= pipe_speed
-            if pipe_x < -70:
-                pipe_x = w
-                gap_y = random.randint(140, 340)
-                score += 1
+                        if p_left[2] > 0.3 and p_right[2] > 0.3:
+                            x_l = int(p_left[0] * scale_x)
+                            y_l = int(p_left[1] * scale_y)
+                            x_p = int(p_right[0] * scale_x)
+                            y_p = int(p_right[1] * scale_y)
 
-            # Kolizja z sufitem i podłogą
-            if bird_y < 15 or bird_y > h - 15:
-                game_over = True
+                            dist = math.dist((x_l, y_l), (x_p, y_p))
+                            is_clapping = dist < CLAP_THRESHOLD
 
-            # Kolizja z rurami (AABB)
-            w_pasmie = (pipe_x < bird_x + 15) and (bird_x - 15 < pipe_x + 60)
-            uderzenie_gora = bird_y - 15 < (gap_y - GAP_SIZE // 2)
-            uderzenie_dol = bird_y + 15 > (gap_y + GAP_SIZE // 2)
+                            kolor = (0, 0, 255) if is_clapping else (0, 255, 0)
+                            cv2.circle(frame, (x_l, y_l), 8, kolor, -1)
+                            cv2.circle(frame, (x_p, y_p), 8, kolor, -1)
+                            cv2.line(frame, (x_l, y_l), (x_p, y_p), kolor, 2)
+                        break
 
-            if w_pasmie and (uderzenie_gora or uderzenie_dol):
-                game_over = True
+                # 4. Sterowanie ptakiem
+                if is_clapping and not was_clapping:
+                    if game_over:
+                        reset_game()
+                    else:
+                        bird_velocity = JUMP_STRENGTH
 
-        # --- RYSOWANIE GRAFIKI ---
-        # Przeszkody
-        cv2.rectangle(
-            frame,
-            (int(pipe_x), 0),
-            (int(pipe_x + 60), gap_y - GAP_SIZE // 2),
-            (0, 180, 0),
-            -1,
-        )
-        cv2.rectangle(
-            frame,
-            (int(pipe_x), gap_y + GAP_SIZE // 2),
-            (int(pipe_x + 60), h),
-            (0, 180, 0),
-            -1,
-        )
+                was_clapping = is_clapping
 
-        # Ptak
-        cv2.circle(frame, (int(bird_x), int(bird_y)), 16, (0, 220, 255), -1)
-        cv2.circle(frame, (int(bird_x + 6), int(bird_y - 4)), 3, (0, 0, 0), -1)
+                # 5. Fizyka i kolizje
+                if not game_over:
+                    bird_velocity += GRAVITY
+                    bird_y += bird_velocity
 
-        # Informacje na ekranie
-        cv2.putText(
-            frame,
-            f"Wynik: {score}",
-            (25, 45),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.1,
-            (255, 255, 255),
-            2,
-        )
+                    pipe_x -= pipe_speed
+                    if pipe_x < -70:
+                        pipe_x = w
+                        gap_y = random.randint(140, 340)
+                        score += 1
 
-        if dist is not None:
-            cv2.putText(
-                frame,
-                f"Dlonie: {int(dist)}px",
-                (25, 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 255),
-                2,
-            )
+                    if bird_y < 15 or bird_y > h - 15:
+                        game_over = True
 
-        if game_over:
-            cv2.putText(
-                frame,
-                "GAME OVER",
-                (w // 2 - 170, h // 2 - 20),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.4,
-                (0, 0, 255),
-                4,
-            )
-            cv2.putText(
-                frame,
-                "Klasnij lub nacisnij 'R', aby zagrac",
-                (w // 2 - 210, h // 2 + 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2,
-            )
+                    w_pasmie = (pipe_x < bird_x + 15) and (
+                        bird_x - 15 < pipe_x + 60
+                    )
+                    uderzenie_gora = bird_y - 15 < (gap_y - GAP_SIZE // 2)
+                    uderzenie_dol = bird_y + 15 > (gap_y + GAP_SIZE // 2)
 
-        cv2.imshow("Flappy Bird AI - Hailo-8 NPU", frame)
+                    if w_pasmie and (uderzenie_gora or uderzenie_dol):
+                        game_over = True
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            break
-        elif key == ord("r"):
-            reset_game()
+                # 6. Rysowanie grafiki
+                cv2.rectangle(
+                    frame,
+                    (int(pipe_x), 0),
+                    (int(pipe_x + 60), gap_y - GAP_SIZE // 2),
+                    (0, 180, 0),
+                    -1,
+                )
+                cv2.rectangle(
+                    frame,
+                    (int(pipe_x), gap_y + GAP_SIZE // 2),
+                    (int(pipe_x + 60), h),
+                    (0, 180, 0),
+                    -1,
+                )
+
+                cv2.circle(
+                    frame, (int(bird_x), int(bird_y)), 16, (0, 220, 255), -1
+                )
+                cv2.circle(
+                    frame, (int(bird_x + 6), int(bird_y - 4)), 3, (0, 0, 0), -1
+                )
+
+                cv2.putText(
+                    frame,
+                    f"Wynik: {score}",
+                    (25, 45),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.1,
+                    (255, 255, 255),
+                    2,
+                )
+
+                if dist is not None:
+                    cv2.putText(
+                        frame,
+                        f"Dlonie: {int(dist)}px",
+                        (25, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+
+                if game_over:
+                    cv2.putText(
+                        frame,
+                        "GAME OVER",
+                        (w // 2 - 170, h // 2 - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.4,
+                        (0, 0, 255),
+                        4,
+                    )
+                    cv2.putText(
+                        frame,
+                        "Klasnij lub nacisnij 'R', aby zagrac",
+                        (w // 2 - 210, h // 2 + 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2,
+                    )
+
+                cv2.imshow("Flappy Bird AI - Hailo-8 NPU", frame)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    break
+                elif key == ord("r"):
+                    reset_game()
 
 finally:
     picam2.stop()
