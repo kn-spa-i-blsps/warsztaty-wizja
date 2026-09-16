@@ -1,0 +1,27 @@
+[2026-09-15 12:48:13.855] [21717] [HailoRT] [info] [vdevice.cpp:523] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-09-15 12:48:13.863] [21717] [HailoRT] [error] [driver_os_specific.cpp:44] [list_devices] Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)
+[2026-09-15 12:48:13.865] [21717] [HailoRT] [error] [driver_os_specific.cpp:69] [scan_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64) - Failed listing hailo devices
+[2026-09-15 12:48:13.865] [21717] [HailoRT] [error] [driver_os_specific.cpp:97] [scan_nnc_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:48:13.865] [21717] [HailoRT] [error] [hailort_driver.cpp:318] [scan_all_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:48:13.865] [21717] [HailoRT] [error] [vdevice.cpp:584] [get_accelerator_type] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:48:13.865] [21717] [HailoRT] [error] [vdevice.cpp:549] [create] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [info] [vdevice.cpp:523] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [driver_os_specific.cpp:44] [list_devices] Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [driver_os_specific.cpp:69] [scan_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64) - Failed listing hailo devices
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [driver_os_specific.cpp:97] [scan_nnc_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [hailort_driver.cpp:318] [scan_all_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [vdevice.cpp:584] [get_accelerator_type] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:49:34.945] [21743] [HailoRT] [error] [vdevice.cpp:549] [create] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:33.313] [2036] [HailoRT] [info] [vdevice.cpp:523] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-09-15 12:50:33.319] [2036] [HailoRT] [error] [driver_os_specific.cpp:44] [list_devices] Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)
+[2026-09-15 12:50:33.321] [2036] [HailoRT] [error] [driver_os_specific.cpp:69] [scan_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64) - Failed listing hailo devices
+[2026-09-15 12:50:33.322] [2036] [HailoRT] [error] [driver_os_specific.cpp:97] [scan_nnc_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:33.322] [2036] [HailoRT] [error] [hailort_driver.cpp:318] [scan_all_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:33.322] [2036] [HailoRT] [error] [vdevice.cpp:584] [get_accelerator_type] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:33.322] [2036] [HailoRT] [error] [vdevice.cpp:549] [create] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:52.735] [2057] [HailoRT] [error] [driver_os_specific.cpp:44] [list_devices] Can't find hailort driver class. Can happen if the driver is not installed, if the kernel was updated or on some driver failure (then read driver dmesg log)
+[2026-09-15 12:50:52.736] [2057] [HailoRT] [error] [driver_os_specific.cpp:69] [scan_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64) - Failed listing hailo devices
+[2026-09-15 12:50:52.736] [2057] [HailoRT] [error] [driver_os_specific.cpp:97] [scan_nnc_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:52.736] [2057] [HailoRT] [error] [hailort_driver.cpp:318] [scan_all_devices] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:52.736] [2057] [HailoRT] [error] [pcie_device.cpp:36] [scan] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
+[2026-09-15 12:50:52.736] [2057] [HailoRT] [error] [device.cpp:64] [scan] CHECK_SUCCESS failed with status=HAILO_DRIVER_NOT_INSTALLED(64)
